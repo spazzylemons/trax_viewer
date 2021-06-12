@@ -2,9 +2,7 @@ const std = @import("std");
 
 const zlm = @import("zlm");
 
-const Page = @import("render/texture_atlas.zig").Page;
-const ROM = @import("rom.zig").ROM;
-const util = @import("util.zig");
+const TextureSpec = @import("track/piece_renderer.zig").TextureSpec;
 
 pub fn ObjExporter(comptime Writer: type) type {
     return struct {
@@ -34,7 +32,7 @@ pub fn ObjExporter(comptime Writer: type) type {
             try self.writer.print("f {} {} {}\n", .{@as(u16, points[0]) + self.point_start, @as(u16, points[1]) + self.point_start, @as(u16, points[2]) + self.point_start});
         }
 
-        pub fn drawTexturedTri(self: *@This(), points: [3]u8, normal: zlm.Vec3, start: u8, uv: [3]zlm.Vec2) !void {
+        pub fn drawTexturedTri(self: *@This(), points: [3]u8, normal: zlm.Vec3, spec: TextureSpec, uvs: [3]u2) !void {
             // TODO "
             try self.writer.print("f {} {} {}\n", .{@as(u16, points[0]) + self.point_start, @as(u16, points[1]) + self.point_start, @as(u16, points[2]) + self.point_start});
         }
@@ -42,11 +40,6 @@ pub fn ObjExporter(comptime Writer: type) type {
         pub fn endShape(self: *@This()) void {
             self.point_start += self.point_count;
             self.point_count = 0;
-        }
-
-        pub fn getTexture(self: *@This(), rom: ROM, address: u24, page: Page, width: u4, height: u4) !zlm.Vec2 {
-            // TODO
-            return zlm.Vec2.zero;
         }
     };
 }

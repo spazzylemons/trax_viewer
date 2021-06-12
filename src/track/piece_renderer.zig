@@ -2,18 +2,9 @@ const std = @import("std");
 
 const zlm = @import("zlm");
 
-const block_length = @import("../render/texture_atlas.zig").block_length;
-const Page = @import("../render/texture_atlas.zig").Page;
 const Piece = @import("piece.zig").Piece;
 const ROM = @import("../rom.zig").ROM;
 const ROMView = @import("../rom.zig").ROMView;
-const Vertex = @import("../render/vertex.zig").Vertex;
-
-/// The uv coordinates and color set of a textured face.
-const TextureData = struct {
-    uv: [4]zlm.Vec2,
-    start: u8,
-};
 
 /// The material (color/texture) of a shape.
 const Material = struct {
@@ -27,33 +18,59 @@ const ShapeData = struct {
     normal: zlm.Vec3,
 };
 
-/// The data concerning a sign's texture.
-const SignTexture = struct {
+pub const TextureSpec = struct {
+    pub const Page = enum { left, right };
+
+    rom: ROM,
     page: Page,
+    start: u8,
+    width: u2,
+    height: u2,
     address: u24,
     reversed: bool,
-};
 
-const TextureType = struct {
-    page: Page,
-    width: u4,
-    height: u4,
-    reversed: bool,
-
-    fn l(width: u4, height: u4) TextureType {
-        return .{ .page = .left, .width = width, .height = height, .reversed = false };
+    fn dim(comptime char: u8) u2 {
+        return switch (char) {
+            '1' => 0,
+            '2' => 1,
+            '4' => 2,
+            '8' => 3,
+            else => @compileError("invalid dimension"),
+        };
     }
 
-    fn lFlip(width: u4, height: u4) TextureType {
-        return .{ .page = .left, .width = width, .height = height, .reversed = true };
+    fn init(comptime str: []const u8, rom: ROM) TextureSpec {
+        comptime const width = dim(str[0]);
+        comptime std.debug.assert(str[1] == 'x');
+        comptime const height = dim(str[2]);
+        comptime const page: Page = switch (str[3]) {
+            'l' => .left,
+            'r' => .right,
+            else => @compileError("invalid page"),
+        };
+        comptime const reversed = if (str.len == 5) blk: {
+            comptime std.debug.assert(str[4] == 'f');
+            break :blk true;
+        } else blk: {
+            comptime std.debug.assert(str.len == 4);
+            break :blk false;
+        };
+        return .{
+            .rom = rom,
+            .page = page,
+            .start = undefined,
+            .width = width,
+            .height = height,
+            .address = undefined,
+            .reversed = reversed,
+        };
     }
 
-    fn r(width: u4, height: u4) TextureType {
-        return .{ .page = .right, .width = width, .height = height, .reversed = false };
-    }
-
-    fn rFlip(width: u4, height: u4) TextureType {
-        return .{ .page = .right, .width = width, .height = height, .reversed = true };
+    fn initKnown(comptime str: []const u8, rom: ROM, start: u8, address: u24) TextureSpec {
+        var result = init(str, rom);
+        result.start = start;
+        result.address = address;
+        return result;
     }
 };
 
@@ -139,81 +156,52 @@ pub fn PieceRenderer(comptime Writer: type) type {
             }
         }
 
-        fn calcTextureFrom(self: @This(), address: u24, start: u8, meta: TextureType) !TextureData {
-            const top_left = try self.writer.getTexture(self.rom, address, meta.page, meta.width, meta.height);
-            const w = @intToFloat(f32, meta.width) / block_length;
-            const h = @intToFloat(f32, meta.height) / block_length;
-            const uv = if (meta.reversed) [_]zlm.Vec2{
-                top_left.add(zlm.vec2(w, 0)),
-                top_left,
-                top_left.add(zlm.vec2(0, h)),
-                top_left.add(zlm.vec2(w, h)),
-            } else [_]zlm.Vec2{
-                top_left,
-                top_left.add(zlm.vec2(w, 0)),
-                top_left.add(zlm.vec2(w, h)),
-                top_left.add(zlm.vec2(0, h)),
-            };
-            return TextureData{
-                .uv = uv,
-                .start = start,
-            };
-        }
-
-        fn calcTexture(self: @This(), id: u8, meta: TextureType) !TextureData {
+        fn calcTexture(self: @This(), id: u8, spec: TextureSpec) !TextureSpec {
             // TODO are these addresses anywhere in the rom?
-            const address = try self.rom.view(0x39D59 + @as(u24, id) * 3).reader().readIntLittle(u24);
-            const start = try self.rom.view(0x39FB1 + @as(u24, id)).reader().readByte();
-            return try self.calcTextureFrom(address, start, meta);
+            var spec_copy = spec;
+            spec_copy.address = try self.rom.view(0x39D59 + @as(u24, id) * 3).reader().readIntLittle(u24);
+            spec_copy.start = try self.rom.view(0x39FB1 + @as(u24, id)).reader().readByte();
+            return spec_copy;
         }
 
-        fn getTextureCoords(self: @This(), mat: Material) !TextureData {
+        fn getTextureSpec(self: @This(), mat: Material) !TextureSpec {
             return switch (mat.cmd) {
-                0x40 => try self.calcTexture(mat.param, TextureType.l(2, 2)),
-                0x48 => try self.calcTexture(mat.param, TextureType.lFlip(2, 2)),
-                0x4A => try self.calcTexture(mat.param, TextureType.l(4, 2)),
-                0x60 => try self.calcTexture(mat.param, TextureType.r(2, 2)),
-                0x68 => try self.calcTexture(mat.param, TextureType.rFlip(2, 2)),
-                0x70 => try self.calcTexture(mat.param, TextureType.rFlip(8, 1)),
+                0x40 => try self.calcTexture(mat.param, TextureSpec.init("2x2l", self.rom)),
+                0x48 => try self.calcTexture(mat.param, TextureSpec.init("2x2lf", self.rom)),
+                0x4A => try self.calcTexture(mat.param, TextureSpec.init("4x2l", self.rom)),
+                0x60 => try self.calcTexture(mat.param, TextureSpec.init("2x2r", self.rom)),
+                0x68 => try self.calcTexture(mat.param, TextureSpec.init("2x2rf", self.rom)),
+                0x70 => try self.calcTexture(mat.param, TextureSpec.init("8x1rf", self.rom)),
                 // This texture is a special one designed to reverse on each render, only used by
                 // the audience. It appears that the parameter is unused. TODO test that in the debugger
                 // TODO when we add animations and stuff like that make it actually flip like in-game
-                0x99 => try self.calcTextureFrom(0x13E020, 0x10, TextureType.l(4, 2)),
-                0x9b => {
-                    // TODO more looking into this hell
-                    const data = try self.getSignTextureFromCodePointer();
-                    return try self.calcTextureFrom(data.address, 0x10, .{
-                        .page = data.page,
-                        .width = 2,
-                        .height = 2,
-                        .reversed = data.reversed,
-                    });
-                },
+                0x99 => TextureSpec.initKnown("4x2l", self.rom, 0x10, 0x13E020),
+                0x9b =>  try self.getSignTextureFromCodePointer(),
                 else => error.NotATexture,
             };
         }
 
         // to reduce the number of models, road signs with different decals share the same model, and their
         // texture pointer is determined based on a subroutine.
-        fn getSignTextureFromCodePointer(self: @This()) !SignTexture {
+        fn getSignTextureFromCodePointer(self: @This()) !TextureSpec {
             // TODO i'll un-hardcode this when i figure out the deeper workings of this code
             return switch (self.piece.code_pointer) {
                 // u-turn left
-                0x9C5B6 => SignTexture{ .page = .right, .address = 0x12C0A0, .reversed = false },
+                0x9C5B6 => TextureSpec.initKnown("2x2r", self.rom, 0x10, 0x12C0A0),
                 // u-turn right
-                0x9C5BF => SignTexture{ .page = .right, .address = 0x12C0A0, .reversed = true },
+                0x9C5BF => TextureSpec.initKnown("2x2rf", self.rom, 0x10, 0x12C0A0),
                 // 90-degree turn left
-                0x9C5C8 => SignTexture{ .page = .right, .address = 0x12C0E0, .reversed = false },
+                0x9C5C8 => TextureSpec.initKnown("2x2r", self.rom, 0x10, 0x12C0E0),
                 // 90-degree turn right
-                0x9C5D1 => SignTexture{ .page = .right, .address = 0x12C0E0, .reversed = true },
+                0x9C5D1 => TextureSpec.initKnown("2x2rf", self.rom, 0x10, 0x12C0E0),
                 // zig-zag right
-                0x9C5DA => SignTexture{ .page = .right, .address = 0x12C0C0, .reversed = false },
+                0x9C5DA => TextureSpec.initKnown("2x2r", self.rom, 0x10, 0x12C0C0),
                 // zig-zag left
-                0x9C5E3 => SignTexture{ .page = .right, .address = 0x12C0C0, .reversed = true },
+                0x9C5E3 => TextureSpec.initKnown("2x2rf", self.rom, 0x10, 0x12C0C0),
                 // rock slide
-                0x9C5EC => SignTexture{ .page = .left, .address = 0x13A0C0, .reversed = false },
+                0x9C5EC => TextureSpec.initKnown("2x2l", self.rom, 0x10, 0x13A0C0),
                 // mule crossing
-                0x9C5F5 => SignTexture{ .page = .left, .address = 0x13A0E0, .reversed = false },
+                0x9C5F5 => TextureSpec.initKnown("2x2l", self.rom, 0x10, 0x13A0E0),
                 // no clue
                 else => error.UnknownSignTexture,
             };
@@ -315,8 +303,8 @@ pub fn PieceRenderer(comptime Writer: type) type {
         fn addTri(self: *@This(), points: [3]u8, shape_data: ShapeData, texture_allowed: bool) !void {
             // some tris are textured (see: the water road in harbor city)
             if (texture_allowed) {
-                if (self.getTextureCoords(shape_data.material)) |texture_data| {
-                    try self.writer.drawTexturedTri(points, shape_data.normal, texture_data.start, texture_data.uv[0..3].*);
+                if (self.getTextureSpec(shape_data.material)) |spec| {
+                    try self.writer.drawTexturedTri(points, shape_data.normal, spec, .{0, 1, 2});
                     return;
                 } else |err| {
                     if (err != error.NotATexture) return err;
@@ -328,9 +316,9 @@ pub fn PieceRenderer(comptime Writer: type) type {
 
         fn addQuad(self: *@This(), points: [4]u8, shape_data: ShapeData) !void {
             var vertices: [6]usize = undefined;
-            if (self.getTextureCoords(shape_data.material)) |texture_data| {
-                try self.writer.drawTexturedTri(points[0..3].*, shape_data.normal, texture_data.start, texture_data.uv[0..3].*);
-                try self.writer.drawTexturedTri(.{points[0], points[2], points[3]}, shape_data.normal, texture_data.start, .{texture_data.uv[0], texture_data.uv[2], texture_data.uv[3]});
+            if (self.getTextureSpec(shape_data.material)) |spec| {
+                try self.writer.drawTexturedTri(points[0..3].*, shape_data.normal, spec, .{0, 1, 2});
+                try self.writer.drawTexturedTri(.{points[0], points[2], points[3]}, shape_data.normal, spec, .{0, 2, 3});
             } else |err| switch (err) {
                 error.NotATexture => {
                     const colors = try self.getColorIds(shape_data.material);

@@ -2,10 +2,10 @@ const std = @import("std");
 
 const zlm = @import("zlm");
 
+const block_length = @import("../render/texture_atlas.zig").block_length;
 const gl = @import("gl.zig");
-const Page = @import("texture_atlas.zig").Page;
-const ROM = @import("../rom.zig").ROM;
 const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
+const TextureSpec = @import("../track/piece_renderer.zig").TextureSpec;
 const Vertex = @import("vertex.zig").Vertex;
 const VertexList = @import("vertex.zig").VertexList;
 
@@ -164,20 +164,31 @@ pub const RendererPieceWriter = struct {
         });
     }
 
-    pub fn drawTexturedTri(self: *RendererPieceWriter, points: [3]u8, normal: zlm.Vec3, start: u8, uv: [3]zlm.Vec2) !void {
+    pub fn drawTexturedTri(self: *RendererPieceWriter, points: [3]u8, normal: zlm.Vec3, spec: TextureSpec, uvs: [3]u2) !void {
         const vertices = try self.getVertices(3, points);
+        // TODO clean
+        const top_left = try self.renderer.texture_atlas.get(self.allocator, spec);
+        const w = @intToFloat(f32, @as(u4, 1) << spec.width) / block_length;
+        const h = @intToFloat(f32, @as(u4, 1) << spec.height) / block_length;
+        const uv_coords = if (spec.reversed) [_]zlm.Vec2{
+            top_left.add(zlm.vec2(w, 0)),
+            top_left,
+            top_left.add(zlm.vec2(0, h)),
+            top_left.add(zlm.vec2(w, h)),
+        } else [_]zlm.Vec2{
+            top_left,
+            top_left.add(zlm.vec2(w, 0)),
+            top_left.add(zlm.vec2(w, h)),
+            top_left.add(zlm.vec2(0, h)),
+        };
         try self.renderer.tris.data.appendSlice(self.allocator, &.{
-            Vertex.initUV(vertices[0], normal, start, uv[0]),
-            Vertex.initUV(vertices[1], normal, start, uv[1]),
-            Vertex.initUV(vertices[2], normal, start, uv[2]),
+            Vertex.initUV(vertices[0], normal, spec.start, uv_coords[uvs[0]]),
+            Vertex.initUV(vertices[1], normal, spec.start, uv_coords[uvs[1]]),
+            Vertex.initUV(vertices[2], normal, spec.start, uv_coords[uvs[2]]),
         });
     }
 
     pub fn endShape(self: *RendererPieceWriter) void {
         self.points.clearAndFree(self.allocator);
-    }
-
-    pub fn getTexture(self: *RendererPieceWriter, rom: ROM, address: u24, page: Page, width: u4, height: u4) !zlm.Vec2 {
-        return try self.renderer.texture_atlas.get(self.allocator, rom, address, page, width, height);
     }
 };

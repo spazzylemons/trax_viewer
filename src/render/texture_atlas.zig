@@ -3,7 +3,7 @@ const std = @import("std");
 const zlm = @import("zlm");
 
 const gl = @import("gl.zig");
-const ROM = @import("../rom.zig").ROM;
+const TextureSpec = @import("../track/piece_renderer.zig").TextureSpec;
 
 pub const texture_length = 512;
 pub const block_length = texture_length / 16;
@@ -14,10 +14,8 @@ const TextureBlock = struct {
     address: u24,
     width: u4,
     height: u4,
-    page: Page,
+    page: TextureSpec.Page,
 };
-
-pub const Page = enum { left, right };
 
 pub const TextureAtlas = struct {
     // opengl texture id
@@ -58,17 +56,17 @@ pub const TextureAtlas = struct {
         self.used_blocks = empty_block_array;
     }
 
-    fn readTexture(self: *TextureAtlas, rom: ROM, address: u24, dx: u8, dy: u8, page: Page, width: u4, height: u4) !void {
-        const pixel_w = @as(u8, width) * 16;
-        const pixel_h = @as(u8, height) * 16;
-        var view = rom.view(address);
+    fn readTexture(self: *TextureAtlas, dx: u8, dy: u8, spec: TextureSpec) !void {
+        const pixel_w = @as(u8, @as(u4, 1) << spec.width) * 16;
+        const pixel_h = @as(u8, @as(u4, 1) << spec.height) * 16;
+        var view = spec.rom.view(spec.address);
 
         var y: u16 = 0;
         while (y < pixel_h) : (y += 1) {
             var x: u16 = 0;
             while (x < pixel_w) : (x += 1) {
                 const b = try view.reader().readByte();
-                self.pixels[y + @as(u16, dy) * 16][x + @as(u16, dx) * 16] = switch (page) {
+                self.pixels[y + @as(u16, dy) * 16][x + @as(u16, dx) * 16] = switch (spec.page) {
                     .left => b & 15,
                     .right => b >> 4,
                 };
@@ -100,12 +98,14 @@ pub const TextureAtlas = struct {
         }
     }
 
-    pub fn get(self: *TextureAtlas, allocator: *std.mem.Allocator, rom: ROM, address: u24, page: Page, width: u4, height: u4) !zlm.Vec2 {
+    pub fn get(self: *TextureAtlas, allocator: *std.mem.Allocator, spec: TextureSpec) !zlm.Vec2 {
+        const width = @as(u4, 1) << spec.width;
+        const height = @as(u4, 1) << spec.height;
         const key = TextureBlock{
-            .address = address,
+            .address = spec.address,
             .width = width,
             .height = height,
-            .page = page,
+            .page = spec.page,
         };
         if (self.block_map.get(key)) |uv| {
             // we've already mapped this texture, so return the existing coordinate
@@ -117,7 +117,7 @@ pub const TextureAtlas = struct {
                 while (x + width - 1 < block_length) : (x += 1) {
                     if (self.isBlockEmpty(x, y, width, height)) {
                         // read the texture from ROM
-                        try self.readTexture(rom, address, x, y, page, width, height);
+                        try self.readTexture(x, y, spec);
                         // create uv coordinate for top-left
                         const value = zlm.vec2(@intToFloat(f32, x) / block_length, @intToFloat(f32, y) / block_length);
                         // put coordinate into map, removing it if following code fails
