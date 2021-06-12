@@ -68,10 +68,10 @@ pub const Vertex = extern struct {
         };
     }
 
-    pub fn initUV(pos: zlm.Vec3, color: u8, uv: zlm.Vec2) Vertex {
+    pub fn initUV(pos: zlm.Vec3, normal: zlm.Vec3, color: u8, uv: zlm.Vec2) Vertex {
         return .{
             .pos = pos,
-            .normal = zlm.Vec3.zero,
+            .normal = normal,
             .color_sets = .{ color, 0, 0 },
             .uv = uv,
             .is_textured = true,

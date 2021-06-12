@@ -2,6 +2,7 @@ const std = @import("std");
 
 const zlm = @import("zlm");
 
+const ObjExporter = @import("obj_exporter.zig").ObjExporter;
 const ROM = @import("rom.zig").ROM;
 const Track = @import("track/track.zig").Track;
 const util = @import("util.zig");
@@ -200,7 +201,7 @@ pub const REPL = struct {
     fn showOne(self: *REPL, model_id: u16) !void {
         self.viewer.track.clear(self.allocator);
         try self.viewer.track.append(self.allocator, .{
-            .x = 0,
+            .x = 1000,
             .y = 0,
             .z = 0,
             .dir = 0,
@@ -297,6 +298,7 @@ pub const REPL = struct {
                     \\load <number/name> | view a track
                     \\show <model_id>    | view a single model, id is 4 hex digits
                     \\debug              | test of viewing all models
+                    \\export <filename>  | export track to a .obj file (work in progress)
                     \\
                 );
             } else if (strEq(input, "q") or strEq(input, "quit")) {
@@ -308,6 +310,12 @@ pub const REPL = struct {
                 }
             } else if (strEq(input, "debug")) {
                 try self.modelTest();
+            } else if (std.mem.startsWith(u8, input, "export ")) {
+                const filename = input[7..];
+                const file = try std.fs.cwd().createFile(filename, .{});
+                defer file.close();
+                var obj_exporter = ObjExporter(std.fs.File.Writer).init(file.writer());
+                self.viewer.track.writeTo(self.rom, 0, &obj_exporter);
             } else if (std.mem.startsWith(u8, input, "load ")) {
                 const i = self.parseTrackNumberOrName(input[5..]);
                 if (i == 0) {

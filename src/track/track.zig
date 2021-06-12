@@ -34,16 +34,22 @@ pub const Track = struct {
             renderer.texture_atlas.clear(allocator);
             renderer.tris.data.clearAndFree(allocator);
             renderer.lines.data.clearAndFree(allocator);
-            for (self.pieces.items) |piece| {
-                // always using animation frame 0 for now
-                piece.render(allocator, rom, renderer, 0) catch |err| {
-                    std.io.getStdErr().writer().print("object was skipped due to the error: {}\n", .{err}) catch {};
-                };
-            }
+            // always using animation frame 0 for now
+            var writer = renderer.newWriter(allocator);
+            self.writeTo(rom, frame, &writer);
+            writer.deinit();
             renderer.tris.update();
             renderer.lines.update();
             renderer.texture_atlas.update();
             self.recompile_needed = false;
+        }
+    }
+
+    pub fn writeTo(self: Track, rom: ROM, frame: u8, writer: anytype) void {
+        for (self.pieces.items) |piece| {
+            piece.render(rom, writer, frame) catch |err| {
+                std.io.getStdErr().writer().print("object was skipped due to the error: {}\n", .{err}) catch {};
+            };
         }
     }
 };
